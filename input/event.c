@@ -32,7 +32,7 @@ void mp_event_drop_files(struct input_ctx *ictx, int num_files, char **files,
         // 填充固定部分
         cmd[0] = "script-message-to";
         cmd[1] = "1mpv";  // 固定前端名称，可调整
-        cmd[2] = "load-file";
+        cmd[2] = "load-files";
 
         // 填充文件路径
         for (int i = 0; i < num_files; i++) {
