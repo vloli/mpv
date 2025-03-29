@@ -19,10 +19,37 @@
 #include "input.h"
 #include "common/msg.h"
 #include "player/external_files.h"
+#include "misc/bstr.h" 
 
 void mp_event_drop_files(struct input_ctx *ictx, int num_files, char **files,
                          enum mp_dnd_action action)
 {
+        if (num_files > 0) {
+         // 动态分配 cmd 数组：3个固定参数 + num_files 个文件路径 + 1个 NULL
+        int cmd_size = 3 + num_files + 1;
+        const char **cmd = talloc_array(NULL, const char *, cmd_size);
+
+        // 填充固定部分
+        cmd[0] = "script-message-to";
+        cmd[1] = "1mpv";  // 固定前端名称，可调整
+        cmd[2] = "load-file";
+
+        // 填充文件路径
+        for (int i = 0; i < num_files; i++) {
+            cmd[3 + i] = files[i];
+        }
+
+        // 末尾置 NULL
+        cmd[cmd_size - 1] = NULL;
+
+        // 发送命令
+        mp_input_run_cmd(ictx, cmd);
+
+        // 释放内存
+        talloc_free(cmd);
+        return;
+    }
+    
     bool all_sub = true;
     for (int i = 0; i < num_files; i++)
         all_sub &= mp_might_be_subtitle_file(files[i]);
