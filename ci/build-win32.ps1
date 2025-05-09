@@ -9,7 +9,7 @@ if (-not (Test-Path $subprojects)) {
 
 # Wrap shaderc to run git-sync-deps and patch unsupported generator expression
 if (-not (Test-Path "$subprojects/shaderc_cmake")) {
-    git clone https://github.com/google/shaderc --depth 1 -b v2025.1 $subprojects/shaderc_cmake
+    git clone https://github.com/google/shaderc --depth 1 $subprojects/shaderc_cmake
     Set-Content -Path "$subprojects/shaderc_cmake/p.diff" -Value @'
 diff --git a/third_party/CMakeLists.txt b/third_party/CMakeLists.txt
 index d44f62a..54d4719 100644
@@ -54,12 +54,9 @@ shaderc_proj = cmake.subproject('shaderc_cmake', options: opts)
 shaderc_dep = declare_dependency(dependencies: [
     shaderc_proj.dependency('shaderc'),
     shaderc_proj.dependency('shaderc_util'),
-    shaderc_proj.dependency('SPIRV'),
     shaderc_proj.dependency('SPIRV-Tools-static'),
     shaderc_proj.dependency('SPIRV-Tools-opt'),
     shaderc_proj.dependency('glslang'),
-    shaderc_proj.dependency('GenericCodeGen'),
-    shaderc_proj.dependency('MachineIndependent'),
 ])
 meson.override_dependency('shaderc', shaderc_dep)
 "@
@@ -133,7 +130,7 @@ $projects = @(
     @{
         Path = "$subprojects/ffmpeg.wrap"
         URL = "https://gitlab.freedesktop.org/gstreamer/meson-ports/ffmpeg.git"
-        Revision = "meson-7.1"
+        Revision = "1906f749ca3e0407f22206cf9d8ba8740394ebfa"
         Provides = @(
             "dependency_names = libavcodec, libavdevice, libavfilter, libavformat, libavutil, libswresample, libswscale"
             "program_names = ffmpeg"
@@ -211,12 +208,13 @@ meson setup build `
     -Dlcms2:jpeg=disabled `
     -Dlcms2:tiff=disabled `
     -Dlibass:test=enabled `
+    -Dlibjpeg-turbo:tests=disabled `
     -Dlibusb:tests=false `
     -Dlibusb:examples=false `
     -Dlibplacebo:demos=false `
     -Dlibplacebo:lcms=enabled `
     -Dlibplacebo:shaderc=enabled `
-    -Dlibplacebo:tests=true `
+    -Dlibplacebo:tests=false `
     -Dlibplacebo:vulkan=enabled `
     -Dlibplacebo:d3d11=enabled `
     -Dxxhash:inline-all=true `
