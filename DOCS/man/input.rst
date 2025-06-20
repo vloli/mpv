@@ -3,8 +3,7 @@ COMMAND INTERFACE
 
 The mpv core can be controlled with commands and properties. A number of ways
 to interact with the player use them: key bindings (``input.conf``), OSD
-(showing information with properties), JSON IPC, the client API (``libmpv``),
-and the classic slave mode.
+(showing information with properties), JSON IPC and the client API (``libmpv``).
 
 input.conf
 ----------
@@ -4020,8 +4019,8 @@ Property list
     This property is read-only, and change notification is not supported.
 
 ``clipboard``
-    The clipboard contents, only works when native clipboard
-    (``--clipboard-enable``) is supported on the platform.
+    The clipboard contents. Only works when native clipboard is supported on the
+    platform.
     Depending on the platform, some sub-properties, writing to properties,
     or change notifications are not currently functional.
 
@@ -4029,9 +4028,10 @@ Property list
 
     ``clipboard/text`` (RW)
         The text content in the clipboard (Windows, Wayland and macOS only).
-        Writing to this property sets the text clipboard content (Windows only).
+        Writing to this property sets the text clipboard content
+        (Windows, Wayland and macOS only).
 
-    ``clipboard/text-primary``
+    ``clipboard/text-primary`` (RW)
         The text content in the primary selection (Wayland only).
 
     .. note::
