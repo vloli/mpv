@@ -2418,10 +2418,16 @@ static int property_imgparams(const struct mp_image_params *p, int action, void 
         for (int i = 0; i < desc.num_planes; i++)
             bpp += desc.bpp[i] >> (desc.xs[i] + desc.ys[i]);
 
+#if PL_API_VER >= 344
+        // If PL_ALPHA_NONE is supported, use it directly, unless in auto mode.
+        if ((desc.flags & MP_IMGFLAG_ALPHA) && alpha == PL_ALPHA_UNKNOWN)
+            alpha = PL_ALPHA_INDEPENDENT;
+#else
         // Alpha type is not supported by FFmpeg, so PL_ALPHA_UNKNOWN may mean alpha
         // is of an unknown type, or simply not present. Normalize to AUTO=no alpha.
         if (!!(desc.flags & MP_IMGFLAG_ALPHA) != (alpha != PL_ALPHA_UNKNOWN))
             alpha = (desc.flags & MP_IMGFLAG_ALPHA) ? PL_ALPHA_INDEPENDENT : PL_ALPHA_UNKNOWN;
+#endif
     }
 
     const struct pl_hdr_metadata *hdr = &p->color.hdr;
@@ -5750,7 +5756,10 @@ static void cmd_frame_step(void *p)
     }
 
     if (flags == 1) {
-        if (!cmd->cmd->is_up)
+        // frame-step command has on_updown set so it is called on both down
+        // and up, but stepping should only be triggered when it matches the
+        // emit_on_up flag.
+        if (cmd->cmd->is_up == cmd->cmd->emit_on_up)
             add_step_frame(mpctx, frames, true);
     } else {
         if (cmd->cmd->is_up) {

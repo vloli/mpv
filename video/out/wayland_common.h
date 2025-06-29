@@ -106,6 +106,13 @@ struct vo_wayland_state {
     void *icc_file;
     uint32_t icc_size;
 
+    /* color-representation */
+    struct wp_color_representation_manager_v1 *color_representation_manager;
+    struct wp_color_representation_surface_v1 *color_representation_surface;
+    int alpha_map[PL_ALPHA_MODE_COUNT];
+    int coefficients_map[PL_COLOR_SYSTEM_COUNT];
+    int range_map[PL_COLOR_SYSTEM_COUNT * 2];
+
     /* content-type */
     struct wp_content_type_manager_v1 *content_type_manager;
     struct wp_content_type_v1 *content_type;
@@ -144,6 +151,7 @@ struct vo_wayland_state {
     bool present_clock;
     bool present_v2;
     bool use_present;
+    int last_zero_copy;
 
     /* single-pixel-buffer */
     struct wp_single_pixel_buffer_manager_v1 *single_pixel_manager;
