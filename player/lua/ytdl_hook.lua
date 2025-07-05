@@ -85,6 +85,7 @@ local codec_map = {
     ["avc1%..*"]    = "h264",
     ["av01%..*"]    = "av1",
     ["mp4a%..*"]    = "aac",
+    ["hev1%..*"]    = "hevc",
 }
 
 -- Codec name as reported by youtube-dl mapped to mpv internal codec names.
@@ -827,7 +828,8 @@ local function add_single_video(json)
             end
             table.insert(chapter_list, {time=chapter.start_time, title=title})
         end
-    elseif json.description ~= nil and json.duration ~= nil then
+    elseif json.description ~= nil and json.duration ~= nil and
+        mp.get_property_bool("ytdl-extract-chapters") then
         chapter_list = extract_chapters(json.description, json.duration)
     end
 

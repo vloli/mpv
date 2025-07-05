@@ -21,7 +21,7 @@ Track Selection
           audio.
 
 ``--slang=<languagecode[,languagecode,...]>``
-    Equivalent to ``--alang``, for subtitle tracks.
+    Analogous to ``--alang``, for subtitle tracks.
 
     This is a string list option. See `List Options`_ for details.
 
@@ -35,7 +35,7 @@ Track Selection
           Portuguese subtitles if available, and otherwise any Portuguese subtitles.
 
 ``--vlang=<...>``
-    Equivalent to ``--alang`` and ``--slang``, for video tracks.
+    Analogous to ``--alang`` and ``--slang``, for video tracks.
 
     This is a string list option. See `List Options`_ for details.
 
@@ -1039,6 +1039,9 @@ Program Behavior
         - ``--ytdl-raw-options=proxy=[http://127.0.0.1:3128]``
         - ``--ytdl-raw-options-append=proxy=http://127.0.0.1:3128``
 
+``--ytdl-extract-chapters=<yes|no>``
+    Enable chapter extracting from youtube-dl video description (default: yes).
+
 ``--js-memory-report=<yes|no>``
     Enable memory reporting for javascript scripts in the stats overlay.
     This is disabled by default because it has an overhead and increases
@@ -1993,7 +1996,7 @@ Audio
     If this is enabled (default), playing with a speed different from normal
     automatically inserts the ``scaletempo2`` audio filter. You can insert
     filters besides ``scaletempo2`` and modify their params using
-    `Conditional auto profiles`:
+    `Conditional auto profiles`_:
 
     ::
 
@@ -2364,7 +2367,7 @@ Audio
     Use ``--help=audio-exts`` to see default extensions.
 
 ``--audio-file-paths=<path1:path2:...>``
-    Equivalent to ``--sub-file-paths`` option, but for auto-loaded audio files.
+    Analogous to ``--sub-file-paths`` option, but for auto-loaded audio files.
 
     This is a path list option. See `List Options`_ for details.
 
@@ -2616,6 +2619,18 @@ Subtitles
         This breaks sub-seek and subtitle rendering when changing play-direction
         from forward to backward during runtime for events that were already
         "seen" and need to be rendered again, if those events got pruned.
+
+``--sub-glyph-limit=<value>``
+    Set the maximum number of cached glyphs in libass cache for the subtitle
+    track. 0 means libass uses its default value.
+
+    Default: 0.
+
+``--sub-bitmap-max-size=<value>``
+    Set the maximum bitmap cache size in libass cache for the subtitle track. 0
+    means libass uses its default value. This accepts values in MB.
+
+    Default: 0.
 
 ``--sub-ass-styles=<filename>``
     Load all SSA/ASS styles found in the specified file and use them for
@@ -4785,6 +4800,26 @@ OSD
 
 ``--osd-fonts-dir=<path>``
     See ``--sub-fonts-dir`` for details.  Defaults to ``~~/fonts``.
+
+``--osd-glyph-limit=<value>``
+    Set the maximum number of cached glyphs in libass cache for the OSD.
+    0 means libass uses its default value.
+
+    Default: 0.
+
+``--osd-bitmap-max-size=<value>``
+    Set the maximum bitmap cache size in libass cache for the OSD. 0 means
+    libass uses its default value. This accepts values in MB.
+
+    Default: 0.
+
+``--osd-prune-delay=<-1|seconds>``
+    Set the delay for automatic pruning of events from memory in libass.
+    Disabled by default. See also ``--sub-ass-prune-delay``.
+
+``--osd-shaper=<simple|complex>``
+    Set the text layout engine used by libass for the OSD. Default: complex.
+    See also ``--sub-shaper``
 
 Screenshot
 ----------
@@ -7384,7 +7419,8 @@ them.
     2.4 function.
 
 ``--icc-use-luma``
-    Use ICC profile luminance value. (Only for ``--vo=gpu-next``)
+    Use ICC profile luminance value. Applies only to HDR targets.
+    (Only for ``--vo=gpu-next``)
 
 ``--lut=<file>``
     Specifies a custom LUT (in Adobe .cube format) to apply to the colors
@@ -7439,7 +7475,10 @@ them.
         Blend the frame against the background color (``--background-color``,
         normally black).
     tiles
-        Blend the frame against a 16x16 gray/white tiles background (default).
+        Blend the frame against a checkerboard pattern with colors specified
+        in the ``--background-tile-color-0`` and ``--background-tile-color-1``
+        options and tile size specified in the ``--background-tile-size`` option
+        (default).
     none
         Do not blend the frame and leave the alpha as is.
 
@@ -7450,8 +7489,18 @@ them.
     Use that instead.
 
 ``--background-color=<color>``
-    Color used to draw parts of the mpv window not covered by video. See the
-    ``--sub-color`` option for how colors are defined.
+    Color used to draw parts of the mpv window not covered by video in
+    ``--background=color`` mode.
+    See the ``--sub-color`` option for how colors are defined.
+
+``--background-tile-color-0=<color>``, ``--background-tile-color-1=<color>``
+    Colors used to draw parts of the mpv window not covered by video in
+    ``--background=tiles`` mode.
+    See the ``--sub-color`` option for how colors are defined.
+
+``--background-tile-size=<1-4096>``
+    Tile size used to draw parts of the mpv window not covered by video in
+    ``--background=tiles`` mode (default: 16).
 
 ``--border-background=<none|color|tiles>``
     Same as ``--background`` but only applies to the black bar/border area of
