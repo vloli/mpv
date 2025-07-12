@@ -165,6 +165,8 @@ static void update_lut(struct priv *p, struct user_lut *lut);
 
 struct gl_next_opts {
     bool delayed_peak;
+    int sub_hdr_peak;
+    int image_subs_hdr_peak;
     int border_background;
     float corner_rounding;
     bool inter_preserve;
@@ -172,6 +174,7 @@ struct gl_next_opts {
     struct user_lut image_lut;
     struct user_lut target_lut;
     int target_hint;
+    int target_hint_mode;
     char **raw_opts;
 };
 
@@ -186,6 +189,10 @@ const struct m_opt_choice_alternatives lut_types[] = {
 #define OPT_BASE_STRUCT struct gl_next_opts
 const struct m_sub_options gl_next_conf = {
     .opts = (const struct m_option[]) {
+        {"sub-hdr-peak", OPT_CHOICE(sub_hdr_peak, {"sdr", PL_COLOR_SDR_WHITE}),
+            M_RANGE(10, 10000)},
+        {"image-subs-hdr-peak", OPT_CHOICE(image_subs_hdr_peak, {"sdr", PL_COLOR_SDR_WHITE},
+            {"video", -1}),  M_RANGE(10, 10000)},
         {"allow-delayed-peak-detect", OPT_BOOL(delayed_peak)},
         {"border-background", OPT_CHOICE(border_background,
             {"none",  BACKGROUND_NONE},
@@ -199,6 +206,7 @@ const struct m_sub_options gl_next_conf = {
         {"image-lut-type", OPT_CHOICE_C(image_lut.type, lut_types)},
         {"target-lut", OPT_STRING(target_lut.opt), .flags = M_OPT_FILE},
         {"target-colorspace-hint", OPT_CHOICE(target_hint, {"auto", -1}, {"no", 0}, {"yes", 1})},
+        {"target-colorspace-hint-mode", OPT_CHOICE(target_hint_mode, {"target", 0}, {"source", 1}, {"source-dynamic", 2})},
         // No `target-lut-type` because we don't support non-RGB targets
         {"libplacebo-opts", OPT_KEYVALUELIST(raw_opts)},
         {0},
@@ -206,6 +214,9 @@ const struct m_sub_options gl_next_conf = {
     .defaults = &(struct gl_next_opts) {
         .border_background = BACKGROUND_COLOR,
         .inter_preserve = true,
+        .sub_hdr_peak = PL_COLOR_SDR_WHITE,
+        .image_subs_hdr_peak = PL_COLOR_SDR_WHITE,
+        .target_hint = -1,
     },
     .size = sizeof(struct gl_next_opts),
     .change_flags = UPDATE_VIDEO,
@@ -365,17 +376,28 @@ static void update_overlays(struct vo *vo, struct mp_osd_res res,
             // Infer bitmap colorspace from source
             if (src) {
                 ol->color = src->params.color;
-                // Seems like HDR subtitles are targeting SDR white
                 if (pl_color_transfer_is_hdr(ol->color.transfer)) {
-                    ol->color.hdr = (struct pl_hdr_metadata) {
-                        .max_luma = PL_COLOR_SDR_WHITE,
-                    };
+                    if (!pl_color_transfer_is_hdr(frame->color.transfer)) {
+                        // Tone mapping targets SDR white
+                        ol->color.hdr = (struct pl_hdr_metadata) {
+                            .max_luma = PL_COLOR_SDR_WHITE,
+                        };
+                    } else if (p->next_opts->image_subs_hdr_peak != -1) {
+                        ol->color.hdr = (struct pl_hdr_metadata) {
+                            .max_luma = p->next_opts->image_subs_hdr_peak,
+                        };
+                    }
                 }
             }
             break;
         case SUBBITMAP_LIBASS:
             if (src && item->video_color_space && !pl_color_space_is_hdr(&src->params.color))
                 ol->color = src->params.color;
+            if (src && pl_color_transfer_is_hdr(frame->color.transfer)) {
+                ol->color.hdr = (struct pl_hdr_metadata) {
+                    .max_luma = p->next_opts->sub_hdr_peak,
+                };
+            }
             ol->mode = PL_OVERLAY_MONOCHROME;
             ol->repr.alpha = PL_ALPHA_INDEPENDENT;
             break;
@@ -796,7 +818,7 @@ static void apply_target_contrast(struct priv *p, struct pl_color_space *color, 
 }
 
 static void apply_target_options(struct priv *p, struct pl_frame *target,
-                                 float target_peak, float min_luma)
+                                 float min_luma, bool hint)
 {
     update_lut(p, &p->next_opts->target_lut);
     target->lut = p->next_opts->target_lut.lut;
@@ -804,16 +826,16 @@ static void apply_target_options(struct priv *p, struct pl_frame *target,
 
     // Colorspace overrides
     const struct gl_video_opts *opts = p->opts_cache->opts;
-    if (p->output_levels)
-        target->repr.levels = p->output_levels;
-    if (opts->target_prim)
-        target->color.primaries = opts->target_prim;
-    if (opts->target_trc)
-        target->color.transfer = opts->target_trc;
     // If swapchain returned a value use this, override is used in hint
-    if (target_peak && !target->color.hdr.max_luma)
-        target->color.hdr.max_luma = target_peak;
-    if (!target->color.hdr.min_luma)
+    if (p->output_levels && (!target->repr.levels || !hint))
+        target->repr.levels = p->output_levels;
+    if (opts->target_prim && (!target->color.primaries || !hint))
+        target->color.primaries = opts->target_prim;
+    if (opts->target_trc && (!target->color.transfer || !hint))
+        target->color.transfer = opts->target_trc;
+    if (opts->target_peak && (!target->color.hdr.max_luma || !hint))
+        target->color.hdr.max_luma = opts->target_peak;
+    if ((!target->color.hdr.min_luma || !hint))
         apply_target_contrast(p, &target->color, min_luma);
     if (opts->target_gamut) {
         // Ensure resulting gamut still fits inside container
@@ -894,6 +916,36 @@ static void update_tm_viz(struct pl_color_map_params *params,
 
     // Visualize red-blue plane
     params->visualize_hue = M_PI / 4.0;
+}
+
+static enum pl_color_primaries get_best_prim_container(const struct pl_raw_primaries *gamut)
+{
+    enum pl_color_primaries container = PL_COLOR_PRIM_UNKNOWN;
+
+    if (!pl_primaries_valid(gamut))
+        return container;
+
+    const struct pl_raw_primaries *best = NULL;
+    for (enum pl_color_primaries prim = 1; prim < PL_COLOR_PRIM_COUNT; prim++) {
+        const struct pl_raw_primaries *raw = pl_raw_primaries_get(prim);
+        if (pl_raw_primaries_similar(raw, gamut)) {
+            container = prim;
+            best = raw;
+            break;
+        }
+
+        if (pl_primaries_superset(raw, gamut) &&
+            (!best || pl_primaries_superset(best, raw)))
+        {
+            container = prim;
+            best = raw;
+        }
+    }
+
+    if (!best)
+        container = PL_COLOR_PRIM_BT_2020;
+
+    return container;
 }
 
 static void update_hook_opts_dynamic(struct priv *p, const struct pl_hook *hook,
@@ -984,33 +1036,69 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
     struct ra_swapchain *sw = p->ra_ctx->swapchain;
 
     bool pass_colorspace = false;
-    struct pl_color_space target_csp;
-    // Assume HDR is supported, if query is not available
+    struct pl_color_space target_csp = {0};
     // TODO: Implement this for all backends
-    target_csp = sw->fns->target_csp
-                     ? sw->fns->target_csp(sw)
-                     : (struct pl_color_space){ .transfer = PL_COLOR_TRC_PQ };
+    if (sw->fns->target_csp)
+        target_csp = sw->fns->target_csp(sw);
+    if (target_csp.primaries == PL_COLOR_PRIM_UNKNOWN)
+        target_csp.primaries = get_best_prim_container(&target_csp.hdr.prim);
     if (!pl_color_transfer_is_hdr(target_csp.transfer)) {
+        // Don't use reported display peak in SDR mode. Mostly because libplacebo
+        // forcefully switches to PQ if hinting hdr metadata, ignoring the transfer
+        // set in the hint. But also because setting target peak in SDR mode is
+        // very specific usecase, needs proper calibration, users can set it manually.
         target_csp.hdr.max_luma = 0;
         target_csp.hdr.min_luma = 0;
+        target_csp.hdr.max_cll = 0;
+        target_csp.hdr.max_fall = 0;
     }
 
-    float target_peak = opts->target_peak ? opts->target_peak : target_csp.hdr.max_luma;
     struct pl_color_space hint;
     bool target_hint = p->next_opts->target_hint == 1 ||
                        (p->next_opts->target_hint == -1 &&
-                        pl_color_transfer_is_hdr(target_csp.transfer));
+                        target_csp.transfer != PL_COLOR_TRC_UNKNOWN);
+    // Assume HDR is supported, if target_csp() is not available
+    if (target_csp.transfer == PL_COLOR_TRC_UNKNOWN) {
+        target_csp = (struct pl_color_space){
+            .transfer = opts->target_trc ? opts->target_trc : PL_COLOR_TRC_PQ };
+    }
     if (target_hint && frame->current) {
-        hint = frame->current->params.color;
+        const struct pl_color_space *source = &frame->current->params.color;
+        const struct pl_color_space *target = &target_csp;
+        hint = *(p->next_opts->target_hint_mode == 0 ? target : source);
+        if (pl_color_transfer_is_hdr(hint.transfer) && !pl_primaries_valid(&hint.hdr.prim))
+            pl_color_space_merge(&hint, source);
+        if (p->next_opts->target_hint_mode == 2) { // source-dynamic
+            pl_color_space_nominal_luma_ex(pl_nominal_luma_params(
+                .color      = &hint,
+                .metadata   = PL_HDR_METADATA_ANY,
+                .scaling    = PL_HDR_NITS,
+                .out_min    = &hint.hdr.min_luma,
+                .out_max    = &hint.hdr.max_luma,
+            ));
+        }
+        // Infer missing bits now. This is important so that we don't lose
+        // information after user option overrides. For example, if the user
+        // sets target_trc to PQ, but the hint(source) is SDR, we want to fill
+        // in SDR luminance values instead of the default PQ range.
+        pl_color_space_infer(&hint);
+        // Always prefer target luminance and transfer for inverse tone mapping
+        if (pl_color_transfer_is_hdr(target->transfer) && opts->tone_map.inverse) {
+            hint.transfer     = target->transfer;
+            hint.hdr.max_luma = target->hdr.max_luma;
+            hint.hdr.min_luma = target->hdr.min_luma;
+            hint.hdr.max_cll  = target->hdr.max_cll;
+            hint.hdr.max_fall = target->hdr.max_fall;
+        }
         if (p->ra_ctx->fns->pass_colorspace && p->ra_ctx->fns->pass_colorspace(p->ra_ctx))
             pass_colorspace = true;
         if (opts->target_prim)
             hint.primaries = opts->target_prim;
         if (opts->target_trc)
             hint.transfer = opts->target_trc;
-        if (target_peak)
-            hint.hdr.max_luma = target_peak;
-        apply_target_contrast(p, &hint, target_csp.hdr.min_luma);
+        if (opts->target_peak)
+            hint.hdr.max_luma = opts->target_peak;
+        apply_target_contrast(p, &hint, hint.hdr.min_luma);
         if (!pass_colorspace)
             pl_swapchain_colorspace_hint(p->sw, &hint);
     } else if (!target_hint) {
@@ -1041,7 +1129,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
     // Calculate target
     struct pl_frame target;
     pl_frame_from_swapchain(&target, &swframe);
-    apply_target_options(p, &target, target_peak, target_csp.hdr.min_luma);
+    apply_target_options(p, &target, target_csp.hdr.min_luma, target_hint && !pass_colorspace);
     update_overlays(vo, p->osd_res,
                     (frame->current && opts->blend_subs) ? OSD_DRAW_OSD_ONLY : 0,
                     PL_OVERLAY_COORDS_DST_FRAME, &p->osd_state, &target, frame->current);
@@ -1416,7 +1504,7 @@ static void video_screenshot(struct vo *vo, struct voctrl_screenshot *args)
     const struct gl_video_opts *opts = p->opts_cache->opts;
     if (args->scaled) {
         // Apply target LUT, ICC profile and CSP override only in window mode
-        apply_target_options(p, &target, opts->target_peak, 0);
+        apply_target_options(p, &target, 0, false);
     } else if (args->native_csp) {
         target.color = image.color;
     } else {
@@ -2226,6 +2314,12 @@ static void update_render_options(struct vo *vo)
 #else
     pars->params.blend_against_tiles = opts->background == BACKGROUND_TILES;
 #endif
+    pars->params.tile_size = opts->background_tile_size * 2;
+    for (int i = 0; i < 2; ++i) {
+        pars->params.tile_colors[i][0] = opts->background_tile_color[i].r / 255.0f;
+        pars->params.tile_colors[i][1] = opts->background_tile_color[i].g / 255.0f;
+        pars->params.tile_colors[i][2] = opts->background_tile_color[i].b / 255.0f;
+    }
 
     pars->params.corner_rounding = p->next_opts->corner_rounding;
     pars->params.correct_subpixel_offsets = !opts->scaler_resizes_only;

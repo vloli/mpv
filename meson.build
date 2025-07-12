@@ -1005,7 +1005,6 @@ features += {'d3d11': d3d11.allowed()}
 if features['d3d11']
     sources += files('video/out/d3d11/context.c',
                      'video/out/d3d11/ra_d3d11.c')
-    features += {'dxgi-debug-d3d11': cc.has_header_symbol('d3d11sdklayers.h', 'DXGI_DEBUG_D3D11')}
 endif
 
 wayland = {
@@ -1198,10 +1197,6 @@ if features['egl-angle-win32']
     sources += files('video/out/opengl/context_angle.c')
 endif
 
-if features['d3d11'] or features['egl-angle-win32']
-    sources += files('video/out/gpu/d3d11_helpers.c')
-endif
-
 egl = dependency('egl', version: '>= 1.4.0', required: get_option('egl'))
 features += {'egl': egl.found() and gl_allowed}
 if features['egl']
@@ -1326,6 +1321,10 @@ if features['vulkan'] or (features['gl'] and features['egl'])
     sources += files('video/filter/vf_gpu.c')
 endif
 
+if features['d3d11'] or features['egl-angle-win32'] or (features['vulkan'] and win32)
+    sources += files('video/out/gpu/d3d11_helpers.c')
+    features += {'dxgi-debug-d3d11': cc.has_header_symbol('d3d11sdklayers.h', 'DXGI_DEBUG_D3D11')}
+endif
 
 # hwaccel
 ffnvcodec = dependency('ffnvcodec', version: '>= 11.1.5.1', required: false)

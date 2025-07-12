@@ -2418,16 +2418,24 @@ static int property_imgparams(const struct mp_image_params *p, int action, void 
         for (int i = 0; i < desc.num_planes; i++)
             bpp += desc.bpp[i] >> (desc.xs[i] + desc.ys[i]);
 
+#if PL_API_VER >= 344
+        // If PL_ALPHA_NONE is supported, use it directly, unless in auto mode.
+        if ((desc.flags & MP_IMGFLAG_ALPHA) && alpha == PL_ALPHA_UNKNOWN)
+            alpha = PL_ALPHA_INDEPENDENT;
+#else
         // Alpha type is not supported by FFmpeg, so PL_ALPHA_UNKNOWN may mean alpha
         // is of an unknown type, or simply not present. Normalize to AUTO=no alpha.
         if (!!(desc.flags & MP_IMGFLAG_ALPHA) != (alpha != PL_ALPHA_UNKNOWN))
             alpha = (desc.flags & MP_IMGFLAG_ALPHA) ? PL_ALPHA_INDEPENDENT : PL_ALPHA_UNKNOWN;
+#endif
     }
 
     const struct pl_hdr_metadata *hdr = &p->color.hdr;
     bool has_cie_y     = pl_hdr_metadata_contains(hdr, PL_HDR_METADATA_CIE_Y);
     bool has_hdr10     = pl_hdr_metadata_contains(hdr, PL_HDR_METADATA_HDR10);
     bool has_hdr10plus = pl_hdr_metadata_contains(hdr, PL_HDR_METADATA_HDR10PLUS);
+    bool custom_prim   = pl_primaries_valid(&hdr->prim) &&
+                         !pl_raw_primaries_similar(&hdr->prim, pl_raw_primaries_get(p->color.primaries));
 
     bool has_crop = mp_rect_w(p->crop) > 0 && mp_rect_h(p->crop) > 0;
     const char *aspect_name = get_aspect_ratio_name(d_w / (double)d_h);
@@ -2483,6 +2491,14 @@ static int property_imgparams(const struct mp_image_params *p, int action, void 
         {"scene-avg",   SUB_PROP_FLOAT(hdr->scene_avg),    .unavailable = !has_hdr10plus},
         {"max-pq-y",    SUB_PROP_FLOAT(hdr->max_pq_y),     .unavailable = !has_cie_y},
         {"avg-pq-y",    SUB_PROP_FLOAT(hdr->avg_pq_y),     .unavailable = !has_cie_y},
+        {"prim-red-x",   SUB_PROP_FLOAT(hdr->prim.red.x),  .unavailable = !custom_prim },
+        {"prim-red-y",   SUB_PROP_FLOAT(hdr->prim.red.y),  .unavailable = !custom_prim },
+        {"prim-green-x", SUB_PROP_FLOAT(hdr->prim.green.x),.unavailable = !custom_prim },
+        {"prim-green-y", SUB_PROP_FLOAT(hdr->prim.green.y),.unavailable = !custom_prim },
+        {"prim-blue-x",  SUB_PROP_FLOAT(hdr->prim.blue.x), .unavailable = !custom_prim },
+        {"prim-blue-y",  SUB_PROP_FLOAT(hdr->prim.blue.y), .unavailable = !custom_prim },
+        {"prim-white-x", SUB_PROP_FLOAT(hdr->prim.white.x),.unavailable = !custom_prim },
+        {"prim-white-y", SUB_PROP_FLOAT(hdr->prim.white.y),.unavailable = !custom_prim },
         {0}
     };
 
@@ -2504,6 +2520,23 @@ static struct mp_image_params get_video_out_params(struct MPContext *mpctx)
     }
 
     return o_params;
+}
+
+static int mp_property_vo_display_swapchain(void *ctx, struct m_property *prop,
+    int action, void *arg)
+{
+    MPContext *mpctx = ctx;
+    struct vo *vo = mpctx->video_out;
+    if (!vo)
+        return M_PROPERTY_UNAVAILABLE;
+
+    void *swapchain_ptr = vo_get_display_swapchain(vo);
+    if (swapchain_ptr == NULL)
+        return M_PROPERTY_UNAVAILABLE;
+
+    int64_t swapchain = (intptr_t)swapchain_ptr;
+
+    return m_property_int64_ro(action, arg, swapchain);
 }
 
 static int mp_property_vo_imgparams(void *ctx, struct m_property *prop,
@@ -2828,7 +2861,7 @@ static int mp_property_display_names(void *ctx, struct m_property *prop,
 {
     MPContext *mpctx = ctx;
     struct vo *vo = mpctx->video_out;
-    if (!vo)
+    if (!vo || vo->display_swapchain)
         return M_PROPERTY_UNAVAILABLE;
 
     switch (action) {
@@ -4312,6 +4345,7 @@ static const struct m_property mp_properties_base[] = {
     {"deinterlace-active", mp_property_deinterlace},
     {"idle-active", mp_property_idle},
     {"window-id", mp_property_window_id},
+    {"display-swapchain", mp_property_vo_display_swapchain},
 
     {"chapter-list", mp_property_list_chapters},
     {"track-list", mp_property_list_tracks},
@@ -5750,7 +5784,10 @@ static void cmd_frame_step(void *p)
     }
 
     if (flags == 1) {
-        if (!cmd->cmd->is_up)
+        // frame-step command has on_updown set so it is called on both down
+        // and up, but stepping should only be triggered when it matches the
+        // emit_on_up flag.
+        if (cmd->cmd->is_up == cmd->cmd->emit_on_up)
             add_step_frame(mpctx, frames, true);
     } else {
         if (cmd->cmd->is_up) {
@@ -6306,6 +6343,7 @@ static void cmd_track_reload(void *p)
         flags |= t->hearing_impaired_track ? TRACK_HEARING_IMPAIRED : 0;
         flags |= t->visual_impaired_track ? TRACK_VISUAL_IMPAIRED : 0;
         flags |= t->forced_track ? TRACK_FORCED : 0;
+        flags |= t->default_track ? TRACK_DEFAULT : 0;
         mp_remove_track(mpctx, t);
         nt_num = mp_add_external_file(mpctx, filename, type, cmd->abort->cancel,
                                       flags);
@@ -6326,6 +6364,7 @@ static void cmd_track_reload(void *p)
         nt->lang = bstrto0(nt, lang);
         nt->hearing_impaired_track = flags & TRACK_HEARING_IMPAIRED;
         nt->forced_track = flags & TRACK_FORCED;
+        nt->default_track = flags & TRACK_DEFAULT;
     }
 
     mp_switch_track(mpctx, nt->type, nt, 0);
@@ -7160,7 +7199,8 @@ const struct mp_cmd_def mp_cmds[] = {
                 {"select", 0}, {"auto", 1}, {"cached", 2},
                 {"hearing-impaired", TRACK_HEARING_IMPAIRED},
                 {"visual-impaired", TRACK_VISUAL_IMPAIRED},
-                {"forced", TRACK_FORCED}),
+                {"forced", TRACK_FORCED},
+                {"default", TRACK_DEFAULT}),
                 .flags = MP_CMD_OPT_ARG},
             {"title", OPT_STRING(v.s), .flags = MP_CMD_OPT_ARG},
             {"lang", OPT_STRING(v.s), .flags = MP_CMD_OPT_ARG},
@@ -7177,7 +7217,8 @@ const struct mp_cmd_def mp_cmds[] = {
                 {"select", 0}, {"auto", 1}, {"cached", 2},
                 {"hearing-impaired", TRACK_HEARING_IMPAIRED},
                 {"visual-impaired", TRACK_VISUAL_IMPAIRED},
-                {"forced", TRACK_FORCED}),
+                {"forced", TRACK_FORCED},
+                {"default", TRACK_DEFAULT}),
                 .flags = MP_CMD_OPT_ARG},
             {"title", OPT_STRING(v.s), .flags = MP_CMD_OPT_ARG},
             {"lang", OPT_STRING(v.s), .flags = MP_CMD_OPT_ARG},
@@ -7195,7 +7236,8 @@ const struct mp_cmd_def mp_cmds[] = {
                 {"hearing-impaired", TRACK_HEARING_IMPAIRED},
                 {"visual-impaired", TRACK_VISUAL_IMPAIRED},
                 {"attached-picture", TRACK_ATTACHED_PICTURE},
-                {"forced", TRACK_FORCED}),
+                {"forced", TRACK_FORCED},
+                {"default", TRACK_DEFAULT}),
                 .flags = MP_CMD_OPT_ARG},
             {"title", OPT_STRING(v.s), .flags = MP_CMD_OPT_ARG},
             {"lang", OPT_STRING(v.s), .flags = MP_CMD_OPT_ARG},
