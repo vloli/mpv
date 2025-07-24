@@ -170,9 +170,10 @@ void playlist_shuffle(struct playlist *pl)
 {
     for (int n = 0; n < pl->num_entries; n++)
         pl->entries[n]->original_index = n;
+    mp_rand_state s = mp_rand_seed(0);
     for (int n = 0; n < pl->num_entries - 1; n++) {
-        size_t j = (size_t)((pl->num_entries - n) * mp_rand_next_double());
-        MPSWAP(struct playlist_entry *, pl->entries[n], pl->entries[n + j]);
+        size_t j = mp_rand_in_range32(&s, n, pl->num_entries);
+        MPSWAP(struct playlist_entry *, pl->entries[n], pl->entries[j]);
     }
     playlist_update_indexes(pl, 0, -1);
 }
@@ -403,12 +404,11 @@ struct playlist *playlist_parse_file(const char *file, struct mp_cancel *cancel,
     struct mp_log *log = mp_log_new(NULL, global->log, "!playlist_parser");
     mp_verbose(log, "Parsing playlist file %s...\n", file);
 
-    char *path = mp_get_user_path(NULL, global, file);
     struct demuxer_params p = {
         .force_format = "playlist",
         .stream_flags = STREAM_ORIGIN_DIRECT,
     };
-    struct demuxer *d = demux_open_url(path, &p, cancel, global);
+    struct demuxer *d = demux_open_url(file, &p, cancel, global);
     struct playlist *ret = NULL;
     if (!d)
         goto done;
@@ -435,7 +435,6 @@ struct playlist *playlist_parse_file(const char *file, struct mp_cancel *cancel,
 
 done:
     talloc_free(log);
-    talloc_free(path);
     return ret;
 }
 

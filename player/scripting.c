@@ -89,8 +89,9 @@ static void run_script(struct mp_script_args *arg)
     if (arg->backend->load(arg) < 0)
         MP_ERR(arg, "Could not load %s script %s\n", arg->backend->name, arg->filename);
 
-    mpv_destroy(arg->client);
+    mpv_handle *client = arg->client;
     talloc_free(arg);
+    mpv_destroy(client);
 }
 
 static MP_THREAD_VOID script_thread(void *p)
@@ -279,7 +280,7 @@ bool mp_load_scripts(struct MPContext *mpctx)
     char **files = mpctx->opts->script_files;
     for (int n = 0; files && files[n]; n++) {
         if (files[n][0])
-            ok &= mp_load_user_script(mpctx, files[n]) >= 0;
+            ok &= mp_load_script(mpctx, files[n]) >= 0;
     }
     if (!mpctx->opts->auto_load_scripts)
         return ok;

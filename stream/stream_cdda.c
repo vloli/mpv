@@ -38,7 +38,6 @@
 #include "options/m_option.h"
 #include "options/m_config.h"
 #include "options/options.h"
-#include "options/path.h"
 
 #if !HAVE_GPL
 #error GPL only
@@ -107,7 +106,7 @@ static void print_cdtext(stream_t *s, int track)
     cdtext_t *text = cdio_get_cdtext(p->cd->p_cdio);
     int header = 0;
     if (text) {
-        for (int i = 0; i < sizeof(cdtext_name) / sizeof(cdtext_name[0]); i++) {
+        for (int i = 0; i < MP_ARRAY_SIZE(cdtext_name); i++) {
             const char *name = cdtext_name[i];
             const char *value = cdtext_get_const(text, i, track);
             if (name && value) {
@@ -254,11 +253,11 @@ static int open_cdda(stream_t *st)
     int last_track;
 
     if (st->path[0]) {
-        p->device = talloc_strdup(priv, st->path);
+        p->device = st->path;
     } else if (p->cdda_device && p->cdda_device[0]) {
-        p->device = mp_get_user_path(priv, st->global, p->cdda_device);
+        p->device = p->cdda_device;
     } else {
-        p->device = talloc_strdup(priv, DEFAULT_OPTICAL_DEVICE);
+        p->device = DEFAULT_OPTICAL_DEVICE;
     }
 
 #if defined(__NetBSD__)

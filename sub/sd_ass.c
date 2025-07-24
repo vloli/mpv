@@ -29,7 +29,6 @@
 #include "config.h"
 #include "options/m_config.h"
 #include "options/options.h"
-#include "options/path.h"
 #include "common/common.h"
 #include "common/msg.h"
 #include "demux/demux.h"
@@ -109,14 +108,11 @@ static const struct sd_filter_functions *const filters[] = {
 
 // Add default styles, if the track does not have any styles yet.
 // Apply style overrides if the user provides any.
-static void mp_ass_add_default_styles(struct sd *sd, ASS_Track *track, struct mp_subtitle_opts *opts,
-                                      struct mp_subtitle_shared_opts *shared_opts)
+static void mp_ass_add_default_styles(ASS_Track *track, struct mp_subtitle_opts *opts,
+                                      struct mp_subtitle_shared_opts *shared_opts, int order)
 {
-    if (opts->ass_styles_file && shared_opts->ass_style_override[sd->order]) {
-        char *file = mp_get_user_path(NULL, sd->global, opts->ass_styles_file);
-        ass_read_styles(track, file, NULL);
-        talloc_free(file);
-    }
+    if (opts->ass_styles_file && shared_opts->ass_style_override[order])
+        ass_read_styles(track, opts->ass_styles_file, NULL);
 
     if (track->n_styles == 0) {
         if (!track->PlayResY) {
@@ -131,7 +127,7 @@ static void mp_ass_add_default_styles(struct sd *sd, ASS_Track *track, struct mp
         mp_ass_set_style(style, track->PlayResY, opts->sub_style);
     }
 
-    if (shared_opts->ass_style_override[sd->order])
+    if (shared_opts->ass_style_override[order])
         ass_process_force_style(track);
 }
 
@@ -260,7 +256,7 @@ static void assobjects_init(struct sd *sd)
     ctx->shadow_track = ass_new_track(ctx->ass_library);
     ctx->shadow_track->PlayResX = MP_ASS_FONT_PLAYRESX;
     ctx->shadow_track->PlayResY = MP_ASS_FONT_PLAYRESY;
-    mp_ass_add_default_styles(sd, ctx->shadow_track, opts, shared_opts);
+    mp_ass_add_default_styles(ctx->shadow_track, opts, shared_opts, sd->order);
 
     char *extradata = sd->codec->extradata;
     int extradata_size = sd->codec->extradata_size;
@@ -271,7 +267,7 @@ static void assobjects_init(struct sd *sd)
     if (extradata)
         ass_process_codec_private(ctx->ass_track, extradata, extradata_size);
 
-    mp_ass_add_default_styles(sd, ctx->ass_track, opts, shared_opts);
+    mp_ass_add_default_styles(ctx->ass_track, opts, shared_opts, sd->order);
 
 #if LIBASS_VERSION >= 0x01302000
     ass_set_check_readorder(ctx->ass_track, sd->opts->sub_clear_on_seek ? 0 : 1);
@@ -282,6 +278,7 @@ static void assobjects_init(struct sd *sd)
 #endif
 
     enable_output(sd, true);
+    ass_set_cache_limits(ctx->ass_renderer, sd->opts->sub_glyph_limit, sd->opts->sub_bitmap_max_size);
 }
 
 static void assobjects_destroy(struct sd *sd)
@@ -476,17 +473,19 @@ static void decode(struct sd *sd, struct demux_packet *packet)
             };
             filter_and_add(sd, &pkt2);
         }
-        if (sub_duration == UNKNOWN_DURATION) {
-            for (int n = track->n_events - 2; n >= 0; n--) {
-                if (track->events[n].Duration == UNKNOWN_DURATION * 1000) {
-                    if (track->events[n].Start != track->events[n + 1].Start) {
-                        track->events[n].Duration = track->events[n + 1].Start -
-                                                    track->events[n].Start;
-                    } else {
-                        track->events[n].Duration = track->events[n + 1].Duration;
-                    }
+        for (int n = track->n_events - 1; n >= 0; n--) {
+            if (track->events[track->n_events - 1].Start == track->events[n].Start)
+                continue;
+            if (track->events[n].Duration == UNKNOWN_DURATION * 1000) {
+                if (track->events[n].Start < track->events[n + 1].Start) {
+                    track->events[n].Duration = track->events[n + 1].Start -
+                                                track->events[n].Start;
+                } else if (track->events[n].Start == track->events[n + 1].Start) {
+                    track->events[n].Duration = track->events[n + 1].Duration;
                 }
             }
+            if (n > 0 && track->events[n].Start != track->events[n - 1].Start)
+                break;
         }
     } else {
         // Note that for this packet format, libass has an internal mechanism
@@ -1097,9 +1096,9 @@ static void mangle_colors(struct sd *sd, struct sub_bitmaps *parts)
     // NONE is a bit random, but the intention is: don't modify colors.
     if (trackcsp == YCBCR_NONE)
         return;
-    if (trackcsp < sizeof(ass_csp) / sizeof(ass_csp[0]))
+    if (trackcsp < MP_ARRAY_SIZE(ass_csp))
         csp = ass_csp[trackcsp];
-    if (trackcsp < sizeof(ass_levels) / sizeof(ass_levels[0]))
+    if (trackcsp <  MP_ARRAY_SIZE(ass_levels))
         levels = ass_levels[trackcsp];
     if (trackcsp == YCBCR_DEFAULT) {
         csp = PL_COLOR_SYSTEM_BT_601;
