@@ -1,10 +1,11 @@
-name: Sync MPV & Protect Custom Files
+name: Sync MPV, Protect event.c & Clean Workflows
 
 on:
   schedule:
-    - cron: '0 0 * * *' 
-  workflow_dispatch: 
+    - cron: '0 0 * * *' # 每天凌晨 0:00 自动运行
+  workflow_dispatch:      # 允许手动点击按钮触发
 
+# 核心权限设置：必须开启 actions: write 才能操作 .github/workflows 目录
 permissions:
   contents: write
   actions: write
@@ -30,29 +31,42 @@ jobs:
 
       - name: Sync and Protect
         run: |
+          # 1. 切换并确认在 master 分支
           git checkout master
 
-          # 1. 备份你修改过的核心文件到临时目录
-          cp .github/workflows/sync_mpv.yml /tmp/sync_mpv.yml.bak
+          # 2. 精准备份：只备份你需要保护的两个文件
+          # 备份自定义代码
           if [ -f "input/event.c" ]; then
             cp input/event.c /tmp/event.c.bak
           fi
+          
+          # 备份本脚本自身 (确保文件名与你仓库中的一致)
+          cp .github/workflows/sync_mpv.yml /tmp/sync_mpv.yml.bak
 
-          # 2. 尝试正常合并上游 master
-          # -X ours 自动解决冲突，优先保留本地改动
+          # 3. 合并上游代码
+          # -X ours: 冲突时优先保留你的本地版本
           git merge upstream/master --no-edit -X ours || echo "Merge conflict handled"
 
-          # 3. 【核心保险】强行将备份还原，确保文件没被合并弄乱
+          # 4. 清理工作流：物理删除目录下所有文件
+          rm -rf .github/workflows/*
+
+          # 5. 精准还原：只放回你自己的脚本和修改过的代码
           cp /tmp/sync_mpv.yml.bak .github/workflows/sync_mpv.yml
           if [ -f "/tmp/event.c.bak" ]; then
             cp /tmp/event.c.bak input/event.c
           fi
 
-          # 4. 提交并推送到你的 master
-          git add .
+          # 6. 提交并推送到你的仓库
+          git add .github/workflows/sync_mpv.yml
+          git add input/event.c
+          
+          # 检查是否有官方多余的 workflow 文件被 git add 了（如果有，就删除它们在 git 中的记录）
+          # 这步确保那些被删除的文件不会出现在 commit 中
+          git add -A
+
           if ! git diff-index --quiet HEAD; then
-            git commit -m "chore: nightly sync with mpv upstream (protected event.c)"
+            git commit -m "chore: sync upstream, protect event.c and keep only sync_mpv.yml"
             git push origin master
           else
-            echo "No new updates from upstream."
+            echo "No changes to commit."
           fi
