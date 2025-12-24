@@ -1,0 +1,58 @@
+name: Sync MPV & Protect Custom Files
+
+on:
+  schedule:
+    - cron: '0 0 * * *' 
+  workflow_dispatch: 
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync-task:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout your fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream and Fetch
+        run: |
+          git remote add upstream https://github.com/mpv-player/mpv.git
+          git fetch upstream
+
+      - name: Sync and Protect
+        run: |
+          git checkout master
+
+          # 1. 备份你修改过的核心文件到临时目录
+          cp .github/workflows/sync_mpv.yml /tmp/sync_mpv.yml.bak
+          if [ -f "input/event.c" ]; then
+            cp input/event.c /tmp/event.c.bak
+          fi
+
+          # 2. 尝试正常合并上游 master
+          # -X ours 自动解决冲突，优先保留本地改动
+          git merge upstream/master --no-edit -X ours || echo "Merge conflict handled"
+
+          # 3. 【核心保险】强行将备份还原，确保文件没被合并弄乱
+          cp /tmp/sync_mpv.yml.bak .github/workflows/sync_mpv.yml
+          if [ -f "/tmp/event.c.bak" ]; then
+            cp /tmp/event.c.bak input/event.c
+          fi
+
+          # 4. 提交并推送到你的 master
+          git add .
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "chore: nightly sync with mpv upstream (protected event.c)"
+            git push origin master
+          else
+            echo "No new updates from upstream."
+          fi
