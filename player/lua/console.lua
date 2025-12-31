@@ -48,8 +48,6 @@ local opts = {
     case_sensitive = false,
     history_dedup = true,
     font_hw_ratio = "auto",
-    selected_color = "",
-    selected_back_color = "",
 }
 
 local styles = {
@@ -342,8 +340,10 @@ local function calculate_max_item_width()
                          (font and "\\fn" .. font or "") .. "\\q2}" ..
                          ass_escape(longest_item)
     local result = width_overlay:update()
-    max_item_width = math.min(result.x1 - result.x0,
-                              osd_w - get_margin_x() * 2 - opts.padding * 2)
+    if result.x0 then
+        max_item_width = math.min(result.x1 - result.x0,
+                                  osd_w - get_margin_x() * 2 - opts.padding * 2)
+    end
 end
 
 local function should_highlight_completion(i)
@@ -1818,15 +1818,5 @@ mp.register_script_message("type", function (...)
 end)
 
 require "mp.options".read_options(opts, nil, render)
-
-if opts.selected_color ~= "" then
-    opts.focused_color = opts.selected_color
-    mp.msg.warn("selected_color has been replaced by focused_color")
-end
-
-if opts.selected_back_color ~= "" then
-    opts.focused_back_color = opts.selected_back_color
-    mp.msg.warn("selected_back_color has been replaced by focused_back_color")
-end
 
 collectgarbage()
