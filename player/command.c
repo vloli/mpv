@@ -536,9 +536,7 @@ static int mp_property_filename(void *ctx, struct m_property *prop,
         if (strcmp(ka->key, "no-ext") == 0) {
             action = ka->action;
             arg = ka->arg;
-            bstr root;
-            if (mp_splitext(f, &root))
-                f = bstrto0(filename, root);
+            f = mp_strip_ext(filename, f);
         }
     }
     int r = m_property_strdup_ro(action, arg, f);
@@ -2054,6 +2052,8 @@ static int get_track_entry(int item, int action, void *arg, void *ctx)
         {"dependent",   SUB_PROP_BOOL(track->dependent_track)},
         {"visual-impaired",  SUB_PROP_BOOL(track->visual_impaired_track)},
         {"hearing-impaired", SUB_PROP_BOOL(track->hearing_impaired_track)},
+        {"original",    SUB_PROP_BOOL(track->original_track)},
+        {"commentary",  SUB_PROP_BOOL(track->commentary_track)},
         {"external",    SUB_PROP_BOOL(track->is_external)},
         {"selected",    SUB_PROP_BOOL(track->selected)},
         {"main-selection", SUB_PROP_INT(order), .unavailable = order < 0},
@@ -2090,6 +2090,7 @@ static int get_track_entry(int item, int action, void *arg, void *ctx)
         {"demux-bitrate",  SUB_PROP_INT(p.bitrate), .unavailable = p.bitrate <= 0},
         {"demux-rotation", SUB_PROP_INT(p.rotate),  .unavailable = p.rotate <= 0},
         {"demux-par",      SUB_PROP_DOUBLE(par),    .unavailable = par <= 0},
+        {"demux-duration", SUB_PROP_PTS(p.duration), .unavailable = p.duration <= 0},
         {"format-name", SUB_PROP_STR(p.format_name), .unavailable = !p.format_name},
         {"replaygain-track-peak", SUB_PROP_FLOAT(rg.track_peak),
                         .unavailable = !has_rg},
@@ -4065,6 +4066,22 @@ static int mp_property_mdata(void *ctx, struct m_property *prop,
     return M_PROPERTY_NOT_IMPLEMENTED;
 }
 
+static int mp_property_default_menu(void *ctx, struct m_property *prop,
+                                    int action, void *arg)
+{
+    switch (action) {
+        case M_PROPERTY_GET:
+            *(char **)arg = talloc_strdup(NULL,
+#include "etc/menu.conf.inc"
+                );
+            return M_PROPERTY_OK;
+        case M_PROPERTY_GET_TYPE:
+            *(struct m_option *)arg = (struct m_option){.type = CONF_TYPE_STRING};
+            return M_PROPERTY_OK;
+    }
+    return M_PROPERTY_NOT_IMPLEMENTED;
+}
+
 static int do_list_udata(int item, int action, void *arg, void *ctx);
 
 struct udata_ctx {
@@ -4570,6 +4587,7 @@ static const struct m_property mp_properties_base[] = {
     {"input-bindings", mp_property_bindings},
 
     {"menu-data", mp_property_mdata},
+    {"default-menu", mp_property_default_menu},
 
     {"user-data", mp_property_udata},
     {"term-size", mp_property_term_size},
@@ -5590,15 +5608,23 @@ void run_command(struct MPContext *mpctx, struct mp_cmd *cmd,
 
     if (cmd->flags & MP_EXPAND_PROPERTIES) {
         for (int n = 0; n < cmd->nargs; n++) {
-            if (cmd->args[n].type->type == CONF_TYPE_STRING) {
-                char *s = mp_property_expand_string(mpctx, cmd->args[n].v.s);
+            const m_option_type_t *type = cmd->args[n].type->type;
+            char **list = NULL;
+            if (type == CONF_TYPE_STRING)
+                list = &cmd->args[n].v.s;
+            else if (type == CONF_TYPE_STRING_LIST || type == CONF_TYPE_KV_LIST)
+                list = cmd->args[n].v.str_list;
+            for (; list && *list; list++) {
+                char *s = mp_property_expand_string(mpctx, *list);
                 if (!s) {
                     ctx->success = false;
                     mp_cmd_ctx_complete(ctx);
                     return;
                 }
-                talloc_free(cmd->args[n].v.s);
-                cmd->args[n].v.s = s;
+                talloc_free(*list);
+                *list = s;
+                if (type == CONF_TYPE_STRING)
+                    break;
             }
         }
     }
@@ -5871,8 +5897,8 @@ static void cmd_frame_step(void *p)
     if (flags == 1) {
         // frame-step command has on_updown set so it is called on both down
         // and up, but stepping should only be triggered when it matches the
-        // emit_on_up flag.
-        if (cmd->cmd->is_up == cmd->cmd->emit_on_up)
+        // emit_on_up flag or if the command is repeated.
+        if (cmd->cmd->repeated || cmd->cmd->is_up == cmd->cmd->emit_on_up)
             add_step_frame(mpctx, frames, true);
     } else {
         if (cmd->cmd->is_up) {
@@ -5967,9 +5993,13 @@ static void cmd_playlist_play_index(void *p)
     struct MPContext *mpctx = cmd->mpctx;
     struct playlist *pl = mpctx->playlist;
     int pos = cmd->args[0].v.i;
+    bool preserve_options = cmd->num_args >= 2 && cmd->args[1].v.b;
 
     if (pos == -2)
         pos = playlist_entry_to_index(pl, pl->current);
+
+    if (preserve_options && pl->current && pos == pl->current->pl_index)
+        pl->current->reloading = true;
 
     mp_set_playlist_entry(mpctx, playlist_entry_from_index(pl, pos));
     if (cmd->on_osd & MP_ON_OSD_MSG)
@@ -6182,7 +6212,7 @@ static void cmd_loadlist(void *p)
     talloc_free(path);
 
     if (pl) {
-        prepare_playlist(mpctx, pl);
+        prepare_playlist(mpctx, pl, true);
         struct playlist_entry *new = pl->current;
         if (action.type == LOAD_TYPE_REPLACE)
             playlist_clear(mpctx->playlist);
@@ -7236,6 +7266,7 @@ const struct mp_cmd_def mp_cmds[] = {
         {
             {"index", OPT_CHOICE(v.i, {"current", -2}, {"none", -1}),
                 M_RANGE(-1, INT_MAX)},
+            {"preserve-options", OPT_BOOL(v.b), .flags = MP_CMD_OPT_ARG},
         }
     },
     { "playlist-shuffle", cmd_playlist_shuffle, },

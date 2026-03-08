@@ -3149,8 +3149,6 @@ Subtitles
     Control how multi line subs are justified irrespective of where they
     are aligned (default: ``auto`` which justifies as defined by
     ``--sub-align-x``).
-    Left justification is recommended to make the subs easier to read
-    as it is easier for the eyes.
 
 ``--sub-ass-justify=<yes|no>``
     Applies justification as defined by ``--sub-justify`` on ASS subtitles
@@ -6120,10 +6118,6 @@ them.
         according to the bit depth of your display.
         This option also affects the auto-detection of ``--dither-depth``.
 
-    .. note::
-
-        Unlike  ``--d3d11-output-format``, this option also takes effect with ``--vo=gpu-next``.
-
 ``--vulkan-device=<device name|UUID>``
     The name or UUID of the Vulkan device to use for rendering and presentation. Use
     ``--vulkan-device=help`` to see the list of available devices and their
@@ -6258,6 +6252,11 @@ them.
 
         For ``--vo=gpu-next``, this is used as a best-effort hint and
         libplacebo has the last say on which format is utilized.
+
+    .. note::
+
+        For ``--vo=gpu-next``, ``rgba16f`` enables scRGB output. Alternatively,
+        ``--target-trc=scrgb`` can be used to request scRGB output.
 
 ``--d3d11-output-csp=<auto|srgb|linear|pq|bt.2020>``
     Select a specific D3D11 output color space to utilize for D3D11 rendering.
@@ -7271,6 +7270,12 @@ them.
         Sony S-Log1 curve
     s-log2
         Sony S-Log2 curve
+    scrgb
+        scRGB, extended linear light transfer. Supports both HDR
+        and wide color gamut content. The output gamut defaults to BT.709
+        unless display primaries are reported by the system. You can also use
+        ``--target-gamut`` to manually specify a wider gamut.
+        (``--vo=gpu-next`` only)
 
     .. note::
 

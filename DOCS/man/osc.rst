@@ -261,6 +261,11 @@ Configurable Options
 
     Show the mpv logo and message when idle
 
+``audioonlyscreen``
+    Default: no
+
+    Show the mpv logo when no video track is present or selected.
+
 ``scalewindowed``
     Default: 1.0
 
@@ -410,6 +415,12 @@ Configurable Options
     The set of window controls is fixed, offering ``minimize``, ``maximize``,
     and ``quit``. Not all platforms implement ``minimize`` and ``maximize``,
     but ``quit`` will always work.
+
+``windowcontrols_independent``
+    Default: yes
+
+    Whether to show window controls independently of the OSC, or show them
+    together.
 
 ``windowcontrols_alignment``
     Default: right

@@ -425,6 +425,9 @@ bool ra_vk_ctx_init(struct ra_ctx *ctx, struct mpvk_ctx *vk,
         .surface = vk->surface,
         .present_mode = preferred_mode,
         .swapchain_depth = ctx->vo->opts->swapchain_depth,
+#if PL_API_VER >= 359
+        .alpha_bits = ctx->opts.want_alpha ? 8 : 0,
+#endif
     };
 
     if (p->opts->swap_mode >= 0) // user override
@@ -523,6 +526,20 @@ static void get_vsync(struct ra_swapchain *sw,
         p->params.get_vsync(sw->ctx, info);
 }
 
+static bool set_color(struct ra_swapchain *sw, struct mp_image_params *params)
+{
+    // Needs VK_COLOR_SPACE_PASS_THROUGH_EXT for Wayland. This is currently the
+    // only backend that supports set_color, and likely will stay that way.
+    // Everything else can use Vulkan API colorspace without issues.
+    bool supported = strcmp(sw->ctx->fns->name, "waylandvk") != 0;
+    struct priv *p = sw->priv;
+    if (supported && p->params.set_color)
+        return p->params.set_color(sw->ctx, params);
+    // Technically we could call pl_swapchain_colorspace_hint() here directly,
+    // but we want to know when parameters are set "externally".
+    return false;
+}
+
 static pl_color_space_t target_csp(struct ra_swapchain *sw)
 {
     struct priv *p = sw->priv;
@@ -533,6 +550,7 @@ static pl_color_space_t target_csp(struct ra_swapchain *sw)
 
 static const struct ra_swapchain_fns vulkan_swapchain = {
     .color_depth   = color_depth,
+    .set_color     = set_color,
     .target_csp    = target_csp,
     .start_frame   = start_frame,
     .submit_frame  = submit_frame,

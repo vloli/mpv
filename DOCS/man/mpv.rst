@@ -257,6 +257,10 @@ Ctrl+v
     currently playing, it is played immediately. Only works on platforms that
     support the ``clipboard`` property.
 
+Ctrl+r
+    Reload the current file, preserving the time position and any changed
+    option. Empties any network cache.
+
 i and I
     Show/toggle an overlay displaying statistics about the currently playing
     file such as codec, framerate, number of dropped frames and so on. See
@@ -351,10 +355,13 @@ g-b
 g-r
     Show the values of all properties.
 
-g-m, MENU, Ctrl+p
+g-m, Ctrl+p
     Show a menu with miscellaneous entries.
 
 See `SELECT`_ for more information.
+
+MENU, Shift+F10
+    Show the context menu (see `CONTEXT MENU`_).
 
 (The following keys are valid if you have a keyboard with multimedia keys.)
 
@@ -398,16 +405,6 @@ Wheel left/right
 Ctrl+Wheel up/down
     Change video zoom keeping the part of the video hovered by the cursor under
     it.
-
-Context Menu
--------------
-
-Context Menu is a menu that pops up on the video window on user interaction
-(mouse right click, etc.).
-
-To use this feature, you need to fill the ``menu-data`` property with menu
-definition data, and add a keybinding to run the ``context-menu`` command,
-which can be done with a user script.
 
 USAGE
 =====
@@ -527,6 +524,13 @@ interpreted as protocol prefix, even though ``://`` can be part of a legal
 UNIX path. To avoid problems with arbitrary paths, you should be sure that
 absolute paths passed to mpv start with ``/``, and prefix relative paths with
 ``./``.
+
+URLs that are passed to mpv should be percent-encoded for it to work reliably.
+There are some heuristics in place that tries to automatically do it, but these
+heuristics are not foolproof. For example, in order to play a file literally
+named ``foo%20.mp4``, using ``http://localhost/foo%20.mp4`` without any
+percent-encoding will not work. Percent-encoding it as
+``http://localhost/foo%2520.mp4`` will work as expected.
 
 Using the ``file://`` pseudo-protocol is discouraged, because it involves
 strange URL unescaping rules.
