@@ -25,7 +25,7 @@ local user_opts = {
                                 -- user, but internally negative is "always-on".
     fadeduration = 200,         -- duration of fade out (and fade in, if enabled) in ms, 0 = no fade
     fadein = false,             -- whether to enable fade-in effect
-    deadzonesize = 0.5,         -- size of deadzone
+    deadzonesize = 0.75,        -- size of deadzone
     minmousemove = 0,           -- minimum amount of pixels the mouse has to
                                 -- move between ticks to make the OSC show up
     layout = "bottombar",
@@ -48,7 +48,11 @@ local user_opts = {
     visibility_modes = "never_auto_always", -- visibility modes to cycle through
     boxmaxchars = 80,           -- title crop threshold for box layout
     boxvideo = false,           -- apply osc_param.video_margins to video
+    dynamic_margins = false,    -- update margins dynamically with OSC visibility
+    sub_margins = true,         -- adjust sub-margin-y to not overlap with OSC
+    osd_margins = true,         -- adjust osd-margin-y to not overlap with OSC
     windowcontrols = "auto",    -- whether to show window controls
+    windowcontrols_fullscreen = false, -- show window controls in fullscreen
     windowcontrols_alignment = "right", -- which side to show window controls on
     windowcontrols_title = "${media-title}", -- same as title but for windowcontrols
     windowcontrols_independent = true, -- show window controls and bottom bar independently
@@ -185,8 +189,6 @@ local margins_opts = {
 }
 
 local tick_delay = 1 / 60
-local audio_track_count = 0
-local sub_track_count = 0
 local window_control_box_width = 80
 local layouts = {}
 local is_december = os.date("*t").month == 12
@@ -257,6 +259,8 @@ local state = {
     hide_timer = nil,
     cache_state = nil,
     idle = false,
+    audio_track_count = 0,
+    sub_track_count = 0,
     no_video = false,
     file_loaded = false,
     enabled = true,
@@ -540,6 +544,18 @@ local function cache_enabled()
     return state.cache_state and #state.cache_state["seekable-ranges"] > 0
 end
 
+local function set_margin_offset(prop, offset)
+    if offset > 0 then
+        if not state[prop] then
+            state[prop] = mp.get_property_number(prop)
+        end
+        mp.set_property_number(prop, state[prop] + offset)
+    elseif state[prop] then
+        mp.set_property_number(prop, state[prop])
+        state[prop] = nil
+    end
+end
+
 local function reset_margins()
     if state.using_video_margins then
         for _, mopt in ipairs(margins_opts) do
@@ -547,18 +563,20 @@ local function reset_margins()
         end
         state.using_video_margins = false
     end
+    set_margin_offset("sub-margin-y", 0)
+    set_margin_offset("osd-margin-y", 0)
 end
 
 local function update_margins()
-    local margins = osc_param.video_margins
-
-    -- Don't use margins if it's visible only temporarily.
-    if not state.osc_visible or get_hidetimeout() >= 0 or
-       (state.fullscreen and not user_opts.showfullscreen) or
-       (not state.fullscreen and not user_opts.showwindowed)
-    then
-        margins = {l = 0, r = 0, t = 0, b = 0}
-    end
+    local use_margins = get_hidetimeout() < 0 or user_opts.dynamic_margins
+    local top_vis = (user_opts.layout:find("top") and state.osc_visible) or state.wc_visible
+    local bottom_vis = user_opts.layout:find("bottom") and state.osc_visible
+    local margins = {
+        l = use_margins and osc_param.video_margins.l or 0,
+        r = use_margins and osc_param.video_margins.r or 0,
+        t = (use_margins and top_vis) and osc_param.video_margins.t or 0,
+        b = (use_margins and bottom_vis) and osc_param.video_margins.b or 0,
+    }
 
     if user_opts.boxvideo then
         -- check whether any margin option has a non-default value
@@ -584,6 +602,24 @@ local function update_margins()
     else
         reset_margins()
     end
+
+    local function get_margin(ent)
+        local margin = 0
+        if user_opts[ent .. "_margins"] then
+            local align = mp.get_property(ent .. "-align-y")
+            if align == "top" and top_vis then
+                margin = margins.t
+            elseif align == "bottom" and bottom_vis then
+                margin = margins.b
+            end
+        end
+        if ent == "sub" and user_opts.boxvideo and mp.get_property_bool("sub-use-margins") then
+            margin = 0
+        end
+        return margin * osc_param.playresy
+    end
+    set_margin_offset("sub-margin-y", get_margin("sub"))
+    set_margin_offset("osd-margin-y", get_margin("osd"))
 
     mp.set_property_native("user-data/osc/margins", margins)
 end
@@ -628,29 +664,29 @@ local function render_wipe(osd)
     osd:remove()
 end
 
+local function update_tracklist(_, track_list)
+    state.audio_track_count = 0
+    state.sub_track_count = 0
 
---
--- Tracklist Management
---
-
--- updates the OSC internal playlists, should be run each time the track-layout changes
-local function update_tracklist()
-    audio_track_count, sub_track_count = 0, 0
-
-    for _, track in pairs(mp.get_property_native("track-list")) do
+    for _, track in pairs(track_list) do
         if track.type == "audio" then
-            audio_track_count = audio_track_count + 1
+            state.audio_track_count = state.audio_track_count + 1
         elseif track.type == "sub" then
-            sub_track_count = sub_track_count + 1
+            state.sub_track_count = state.sub_track_count + 1
         end
     end
+
+    request_init()
 end
 
 -- WindowControl helpers
 local function window_controls_enabled()
     local val = user_opts.windowcontrols
     if val == "auto" then
-        return not (state.border and state.title_bar)
+        if state.fullscreen then
+            return user_opts.windowcontrols_fullscreen
+        end
+        return not state.border or not state.title_bar
     else
         return val ~= "no"
     end
@@ -2006,26 +2042,23 @@ local function osc_init()
     ne.content = icons.chapter_next
     bind_mouse_buttons("chapter_next")
 
-    --
-    update_tracklist()
-
     --audio_track
     ne = new_element("audio_track", "button")
 
-    ne.enabled = audio_track_count > 0
+    ne.enabled = state.audio_track_count > 0
     ne.content = function ()
         return icons.audio .. osc_styles.smallButtonsLlabel .. " " ..
-               mp.get_property_number("aid", "-") .. "/" .. audio_track_count
+               mp.get_property_number("aid", "-") .. "/" .. state.audio_track_count
     end
     bind_mouse_buttons("audio_track")
 
     --sub_track
     ne = new_element("sub_track", "button")
 
-    ne.enabled = sub_track_count > 0
+    ne.enabled = state.sub_track_count > 0
     ne.content = function ()
         return icons.subtitle .. osc_styles.smallButtonsLlabel .. " " ..
-               mp.get_property_number("sid", "-") .. "/" .. sub_track_count
+               mp.get_property_number("sid", "-") .. "/" .. state.sub_track_count
     end
     bind_mouse_buttons("sub_track")
 
@@ -2241,20 +2274,20 @@ local function osc_init()
     update_margins()
 end
 
-local function set_bar_visible(visible_key, visible, with_margins)
+local function set_bar_visible(visible_key, visible)
     if state[visible_key] ~= visible then
         state[visible_key] = visible
-        if with_margins then update_margins() end
+        update_margins()
     end
     request_tick()
 end
 
 local function osc_visible(visible)
-    set_bar_visible("osc_visible", visible, true)
+    set_bar_visible("osc_visible", visible)
 end
 
 local function set_wc_visible(visible)
-    set_bar_visible("wc_visible", visible, false)
+    set_bar_visible("wc_visible", visible)
 end
 
 local function show_bar(label, showtime_key, visible_key, anitype_key, set_visible)
@@ -2309,11 +2342,6 @@ end
 
 local function hide_wc()
     hide_bar("wc", "wc_visible", "wc_anitype", set_wc_visible)
-end
-
-local function pause_state(_, enabled)
-    state.paused = enabled
-    request_tick()
 end
 
 local function cache_state(_, st)
@@ -2413,8 +2441,16 @@ local function process_event(source, what)
                 )
             ) then
             if window_controls_enabled() and user_opts.windowcontrols_independent then
-                if mouse_in_area("showhide_wc") then show_wc() end
-                if mouse_in_area("showhide") then show_osc() end
+                if mouse_in_area("showhide_wc") then
+                    show_wc()
+                elseif user_opts.visibility ~= "always" then
+                    hide_wc()
+                end
+                if mouse_in_area("showhide") then
+                    show_osc()
+                elseif user_opts.visibility ~= "always" then
+                    hide_osc()
+                end
             else
                 show_osc()
                 if window_controls_enabled() then show_wc() end
@@ -2651,12 +2687,11 @@ tick = function()
     if not state.enabled then return end
 
     if state.idle then
+        render_wipe(state.osd)
         -- render idle message
         msg.trace("idle message")
         if user_opts.idlescreen then
             render_logo()
-        else
-            render_wipe(state.osd)
         end
 
         if state.showhide_enabled then
@@ -2739,7 +2774,7 @@ end
 
 mp.register_event("shutdown", shutdown)
 mp.register_event("start-file", request_init)
-mp.observe_property("track-list", "native", request_init)
+mp.observe_property("track-list", "native", update_tracklist)
 mp.observe_property("playlist-count", "native", request_init)
 mp.observe_property("playlist-pos", "native", request_init)
 mp.observe_property("chapter-list", "native", function(_, list)
@@ -2821,7 +2856,7 @@ mp.add_hook("on_unload", 50, function()
 end)
 
 mp.observe_property("display-fps", "number", set_tick_delay)
-mp.observe_property("pause", "bool", pause_state)
+mp.observe_property("pause", "bool", request_tick)
 mp.observe_property("volume", "number", request_tick)
 mp.observe_property("mute", "bool", request_tick)
 mp.observe_property("demuxer-cache-state", "native", cache_state)
@@ -3050,7 +3085,7 @@ end)
 validate_user_opts()
 set_osc_styles()
 set_time_styles(true, true)
-set_tick_delay("display_fps", mp.get_property_number("display_fps"))
+set_tick_delay()
 visibility_mode(user_opts.visibility, true)
 update_duration_watch()
 
