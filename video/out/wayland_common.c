@@ -1343,9 +1343,6 @@ static void data_device_handle_leave(void *data, struct wl_data_device *wl_ddev)
 static void data_device_handle_motion(void *data, struct wl_data_device *wl_ddev,
                                       uint32_t time, wl_fixed_t x, wl_fixed_t y)
 {
-    struct vo_wayland_seat *s = data;
-    struct vo_wayland_data_offer *o = s->dnd_offer;
-    wl_data_offer_accept(o->offer, time, o->mime_type);
 }
 
 static void data_device_handle_drop(void *data, struct wl_data_device *wl_ddev)
@@ -2328,9 +2325,7 @@ static void supported_alpha_mode(void *data, struct wp_color_representation_mana
     struct vo_wayland_state *wl = data;
     switch (alpha_mode) {
     case WP_COLOR_REPRESENTATION_SURFACE_V1_ALPHA_MODE_PREMULTIPLIED_ELECTRICAL:
-#if PL_API_VER >= 344
-        wl->alpha_map[PL_ALPHA_NONE] = alpha_mode;
-#endif
+        wl->alpha_map[PL_ALPHA_PREMULTIPLIED] = alpha_mode;
         break;
     case WP_COLOR_REPRESENTATION_SURFACE_V1_ALPHA_MODE_STRAIGHT:
         wl->alpha_map[PL_ALPHA_INDEPENDENT] = alpha_mode;
@@ -3781,7 +3776,7 @@ static void set_geometry(struct vo_wayland_state *wl, bool resize)
 
     struct vo_win_geometry geo;
     struct mp_rect screenrc = wl->current_output->geometry;
-    vo_calc_window_geometry(vo, &screenrc, &screenrc, wl->scaling_factor, false, &geo);
+    vo_calc_window_geometry(vo, wl->opts, &screenrc, &screenrc, wl->scaling_factor, false, &geo, NULL);
     vo_apply_window_geometry(vo, &geo);
 
     int gcd = greatest_common_divisor(vo->dwidth, vo->dheight);
