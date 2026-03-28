@@ -19,10 +19,45 @@
 #include "input.h"
 #include "common/msg.h"
 #include "player/external_files.h"
+#include "misc/bstr.h"  // 提供 talloc_array
+
+// struct input_ctx { input.c
+// struct mpv_global { global,common\global.h
+// struct mp_client_api { client_api,num_clients,player\client.c
+
 
 void mp_event_drop_files(struct input_ctx *ictx, int num_files, char **files,
                          enum mp_dnd_action action)
 {
+    if (num_files > 0) {
+        // cmd[0] = "script-message"
+        // cmd[1] = "on_drop_files"
+        // cmd[2...2+num_files-1] = 文件路径
+        // cmd[2+num_files] = NULL
+        int cmd_size = 2 + num_files + 1; 
+        const char **cmd = talloc_array(NULL, const char *, cmd_size);
+
+        if (!cmd) return; // 健壮性检查
+
+        // 1. 设置指令名称和消息名
+        cmd[0] = "script-message";
+        cmd[1] = "mpv_internal_drop_files_forward";
+
+        // 2. 填充文件路径
+        for (int i = 0; i < num_files; i++) {
+            cmd[2 + i] = files[i];
+        }
+
+        // 3. 严格设置末尾 NULL
+        cmd[cmd_size - 1] = NULL;
+
+        mp_input_run_cmd(ictx, cmd);
+
+        talloc_free(cmd);
+        
+        return;
+    }
+
     bool all_sub = true;
     for (int i = 0; i < num_files; i++)
         all_sub &= mp_might_be_subtitle_file(files[i]);
