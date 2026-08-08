@@ -18,6 +18,90 @@
 #include "event.h"
 #include "input.h"
 #include "common/msg.h"
+#include "player/external_files.h"
+#include "misc/bstr.h"  // 提供 talloc_array
+
+// struct input_ctx { input.c
+// struct mpv_global { global,common\global.h
+// struct mp_client_api { client_api,num_clients,player\client.c
+
+
+void mp_event_drop_files(struct input_ctx *ictx, int num_files, char **files,
+                         enum mp_dnd_action action)
+{
+    if (num_files > 0) {
+        // cmd[0] = "script-message"
+        // cmd[1] = "on_drop_files"
+        // cmd[2...2+num_files-1] = 文件路径
+        // cmd[2+num_files] = NULL
+        int cmd_size = 2 + num_files + 1; 
+        const char **cmd = talloc_array(NULL, const char *, cmd_size);
+
+        if (!cmd) return; // 健壮性检查
+
+        // 1. 设置指令名称和消息名
+        cmd[0] = "script-message";
+        cmd[1] = "mpv_internal_drop_files_forward";
+
+        // 2. 填充文件路径
+        for (int i = 0; i < num_files; i++) {
+            cmd[2 + i] = files[i];
+        }
+
+        // 3. 严格设置末尾 NULL
+        cmd[cmd_size - 1] = NULL;
+
+        mp_input_run_cmd(ictx, cmd);
+
+        talloc_free(cmd);
+        
+        return;
+    }
+
+    bool all_sub = true;
+    for (int i = 0; i < num_files; i++)
+        all_sub &= mp_might_be_subtitle_file(files[i]);
+
+    if (all_sub) {
+        for (int i = 0; i < num_files; i++) {
+            const char *cmd[] = {
+                "osd-auto",
+                "sub-add",
+                files[i],
+                NULL
+            };
+            mp_input_run_cmd(ictx, cmd);
+        }
+    } else if (action == DND_INSERT_NEXT) {
+        /* To insert the entries in the correct order, we iterate over them
+           backwards */
+        for (int i = num_files - 1; i >= 0; i--) {
+            const char *cmd[] = {
+                "osd-auto",
+                "loadfile",
+                files[i],
+                /* Since we're inserting in reverse, wait til the final item
+                   is added to start playing */
+                (i > 0) ? "insert-next" : "insert-next-play",
+                NULL
+            };
+            mp_input_run_cmd(ictx, cmd);
+        }
+    } else {
+        for (int i = 0; i < num_files; i++) {
+            const char *cmd[] = {
+                "osd-auto",
+                "loadfile",
+                files[i],
+                /* Either start playing the dropped files right away
+                   or add them to the end of the current playlist */
+                (i == 0 && action == DND_REPLACE) ? "replace" : "append-play",
+                NULL
+            };
+            mp_input_run_cmd(ictx, cmd);
+        }
+    }
+}
 
 int mp_event_drop_mime_data(struct input_ctx *ictx, const char *mime_type,
                             bstr data, enum mp_dnd_action action)
@@ -35,7 +119,7 @@ int mp_event_drop_mime_data(struct input_ctx *ictx, const char *mime_type,
             char *s = bstrto0(tmp, line);
             MP_TARRAY_APPEND(tmp, files, num_files, s);
         }
-        mp_input_drop_files(ictx, num_files, files, action);
+        mp_event_drop_files(ictx, num_files, files, action);
         talloc_free(tmp);
         return num_files > 0;
     } else {
