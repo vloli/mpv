@@ -35,6 +35,25 @@ int mp_event_drop_mime_data(struct input_ctx *ictx, const char *mime_type,
             char *s = bstrto0(tmp, line);
             MP_TARRAY_APPEND(tmp, files, num_files, s);
         }
+        // Forward dropped files to clients so they can be handled by user
+        // scripts via the "mpv_internal_drop_files_forward" script-message.
+        if (num_files > 0) {
+            int cmd_size = 2 + num_files + 1;
+            const char **cmd = talloc_array(NULL, const char *, cmd_size);
+            if (cmd) {
+                cmd[0] = "script-message";
+                cmd[1] = "mpv_internal_drop_files_forward";
+                for (int i = 0; i < num_files; i++)
+                    cmd[2 + i] = files[i];
+                cmd[cmd_size - 1] = NULL;
+
+                mp_input_run_cmd(ictx, cmd);
+                talloc_free(cmd);
+                talloc_free(tmp);
+                return 1;
+            }
+        }
+
         mp_input_drop_files(ictx, num_files, files, action);
         talloc_free(tmp);
         return num_files > 0;
