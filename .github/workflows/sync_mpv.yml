@@ -1,0 +1,56 @@
+name: Sync MPV & Force Protect
+
+on:
+  schedule:
+    - cron: '0 0 * * *' 
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync-task:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout your fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # 必须用 0，否则拿不到历史记录，没法找回你的文件
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Force Sync Upstream
+        run: |
+          # 1. 添加并拉取官方上游
+          git remote add upstream https://github.com/mpv-player/mpv.git
+          git fetch upstream master
+
+          # 2. 记住你现在的版本（含有你修改过的 event.c）
+          CURRENT_FORK_HEAD=$(git rev-parse HEAD)
+
+          # 3. 暴力重置！让你的 master 瞬间变成官方最新版
+          git reset --hard upstream/master
+
+          # 4. 局部还原：从你刚才记住的版本里，把那两个文件单独“捡”回来
+          # 这样不会引入旧的合并记录，只会覆盖这两个文件的内容
+          git checkout $CURRENT_FORK_HEAD -- input/event.c
+          git checkout $CURRENT_FORK_HEAD -- .github/workflows/sync_mpv.yml
+
+          # 5. 清理官方那些烦人的 Workflows
+          # 只留下这一个同步脚本，其他的全删掉
+          find .github/workflows -name "*.yml" ! -name "sync_mpv.yml" -exec git rm -f {} +
+
+          # 6. 提交并强制推送
+          # 因为我们用了 reset --hard，必须用 --force 才能推送到 GitHub
+          git add .
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "chore: force sync upstream & re-apply local event.c"
+            git push origin master --force
+          else
+            echo "Everything is already identical to upstream + your tweaks."
+          fi
